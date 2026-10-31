@@ -89,6 +89,12 @@ rustPlatform.buildRustPackage (finalAttrs: {
       --replace-fail 'PathBuf::from("/run/current-system/sw/bin"),' \
         'PathBuf::from("/run/current-system/sw/bin"), PathBuf::from("${herdr-core}/bin"),'
 
+    # Settings tells a Nix build to update with git; drop this once
+    # https://github.com/herdrdev/herdr-app/issues/136 is fixed.
+    substituteInPlace defaults/frame/settings/main.js \
+      --replace-fail '"A build from source: it updates with git, not here."' \
+        '"Managed by nix: update it there."'
+
     # The tests use /var/tmp, which the sandbox lacks.
     for f in src/{mod_files.rs,mods.rs,mods/lifecycle_tests.rs,mods/render_tests.rs,update_notes.rs}; do
       substituteInPlace "$f" --replace-fail /var/tmp "$TMPDIR"
