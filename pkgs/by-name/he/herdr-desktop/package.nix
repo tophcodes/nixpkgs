@@ -8,6 +8,7 @@
   clang,
   makeDesktopItem,
   copyDesktopItems,
+  cctools,
   fontconfig,
   freetype,
   libxcb,
@@ -45,6 +46,11 @@ rustPlatform.buildRustPackage (finalAttrs: {
     hash = "sha256-ElraUWks2i8aJJhkbwpz43k6ttOV55NMPek344wgyZs=";
   };
 
+  # Closing a window on a Mac with a Touch Bar aborts in AppKit's
+  # -[_NSTouchBarFinderObservation invalidate]: zed-industries/zed#64819,
+  # fixed by zed-industries/zed#65186, applied to the vendored gpui-pre-macos.
+  patches = lib.optionals stdenv.hostPlatform.isDarwin [ ./gpui-macos-touch-bar-window-close.patch ];
+
   cargoHash = "sha256-euxSTVGKqaFfJh9umqPeaDYej5ytFXgLECeL62V1SrY=";
 
   zigDeps = zig_0_16.fetchDeps {
@@ -60,12 +66,16 @@ rustPlatform.buildRustPackage (finalAttrs: {
     # PATH; otherwise it uses Zig's, and bindgen then finds no stdint.h.
     clang
     rustPlatform.bindgenHook
-    copyDesktopItems
-  ];
+  ]
+  ++ lib.optionals stdenv.hostPlatform.isLinux [ copyDesktopItems ]
+  # Ghostty combines its static archives with Apple's `libtool -static`.
+  ++ lib.optionals stdenv.hostPlatform.isDarwin [ cctools ];
 
   buildInputs = [
     fontconfig
     freetype
+  ]
+  ++ lib.optionals stdenv.hostPlatform.isLinux [
     libxcb
     libxkbcommon
   ];
@@ -78,17 +88,20 @@ rustPlatform.buildRustPackage (finalAttrs: {
       --replace-fail 'lib.bundle_compiler_rt = true;' 'lib.bundle_compiler_rt = false;' \
       --replace-fail 'lib.bundle_ubsan_rt = true;' 'lib.bundle_ubsan_rt = false;'
 
-    # The app opens links and files with xdg-open. It looks for hc on PATH,
-    # then in the usual install places; this herdr-core joins those, after
-    # the system profile.
+    # The app looks for hc on PATH, then in the usual install places; this
+    # herdr-core joins those, after the system profile.
+    substituteInPlace src/core_bin.rs \
+      --replace-fail 'PathBuf::from("/run/current-system/sw/bin"),' \
+        'PathBuf::from("/run/current-system/sw/bin"), PathBuf::from("${herdr-core}/bin"),'
+  ''
+  # On Linux the app opens links and files with xdg-open.
+  + lib.optionalString stdenv.hostPlatform.isLinux ''
     substituteInPlace src/links.rs \
       --replace-fail '"xdg-open"' '"${lib.getExe' xdg-utils "xdg-open"}"'
     substituteInPlace vendor/gpui-pre-linux/src/linux/platform.rs \
       --replace-fail 'new_std_command("xdg-open")' 'new_std_command("${lib.getExe' xdg-utils "xdg-open"}")'
-    substituteInPlace src/core_bin.rs \
-      --replace-fail 'PathBuf::from("/run/current-system/sw/bin"),' \
-        'PathBuf::from("/run/current-system/sw/bin"), PathBuf::from("${herdr-core}/bin"),'
-
+  ''
+  + ''
     # Settings tells a Nix build to update with git; drop this once
     # https://github.com/herdrdev/herdr-app/issues/136 is fixed.
     substituteInPlace defaults/frame/settings/main.js \
@@ -107,6 +120,9 @@ rustPlatform.buildRustPackage (finalAttrs: {
     chmod -R u+w "$ZIG_GLOBAL_CACHE_DIR/p"
   '';
 
+  # The render tests need Metal, which the sandbox does not provide.
+  doCheck = !stdenv.hostPlatform.isDarwin;
+
   # Some tests run programs in $HOME.
   nativeCheckInputs = [ writableTmpDirAsHomeHook ];
 
@@ -122,12 +138,12 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   # The render and pixel tests draw real frames, on Mesa's software Vulkan
   # driver; the test binaries don't get the RUNPATH entries from postFixup.
-  preCheck = ''
+  preCheck = lib.optionalString stdenv.hostPlatform.isLinux ''
     export VK_DRIVER_FILES=${mesa}/share/vulkan/icd.d/lvp_icd.${stdenv.hostPlatform.parsed.cpu.name}.json
     export LD_LIBRARY_PATH=${lib.makeLibraryPath dlopenLibs}
   '';
 
-  desktopItems = [
+  desktopItems = lib.optionals stdenv.hostPlatform.isLinux [
     (makeDesktopItem {
       name = "herdr-app";
       desktopName = "Herdr";
@@ -141,15 +157,25 @@ rustPlatform.buildRustPackage (finalAttrs: {
   ];
 
   postInstall = ''
+    install -Dm644 LICENSE THIRD-PARTY-NOTICES -t $out/share/licenses/herdr-desktop
+  ''
+  + lib.optionalString stdenv.hostPlatform.isLinux ''
     install -Dm644 assets/icons/herdr-ui-icon-clean.svg \
       $out/share/icons/hicolor/scalable/apps/herdr-app.svg
-    install -Dm644 LICENSE THIRD-PARTY-NOTICES -t $out/share/licenses/herdr-desktop
+  ''
+  # The app bundle scripts/install-macos builds, without its ad-hoc signature.
+  + lib.optionalString stdenv.hostPlatform.isDarwin ''
+    app=$out/Applications/Herdr.app
+    mkdir -p $app/Contents/MacOS $app/Contents/Resources
+    ln -s $out/bin/herdr-app $app/Contents/MacOS/Herdr
+    cp assets/icons/Herdr.icns $app/Contents/Resources/Herdr.icns
+    sed -n '/<?xml/,/<\/plist>/p' scripts/install-macos > $app/Contents/Info.plist
   '';
 
   # A RUNPATH entry rather than LD_LIBRARY_PATH: the app starts herdr-core,
   # which passes its environment on to every terminal. This runs after fixup,
   # which drops RUNPATH entries the binary doesn't link against.
-  postFixup = ''
+  postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
     patchelf --add-rpath ${lib.makeLibraryPath dlopenLibs} $out/bin/herdr-app
   '';
 
@@ -182,6 +208,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
     platforms = [
       "x86_64-linux"
       "aarch64-linux"
+      "aarch64-darwin"
     ];
   };
 })

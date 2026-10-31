@@ -1,8 +1,10 @@
 {
   lib,
+  stdenv,
   rustPlatform,
   fetchFromGitHub,
   zig_0_16,
+  cctools,
   installAgentSkills,
   bash,
   coreutils,
@@ -42,9 +44,23 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   nativeBuildInputs = [
     installAgentSkills
-  ];
+  ]
+  # Ghostty combines its static archives with Apple's `libtool -static`.
+  ++ lib.optionals stdenv.hostPlatform.isDarwin [ cctools ];
 
-  env.ZIG = lib.getExe zig_0_16;
+  env = {
+    ZIG = lib.getExe zig_0_16;
+  }
+  // lib.optionalAttrs stdenv.hostPlatform.isLinux {
+    # hc tells builds apart by their GNU build id, so a byte-identical copy of
+    # the binary counts as the same build. Without one it falls back to the
+    # file's identity.
+    NIX_SET_BUILD_ID = "1";
+    # The linker hashes the debug sections into the build id, and those hold
+    # Zig cache paths that change from build to build. Dropping them at link
+    # time keeps the build id reproducible; stdenv strips them anyway.
+    NIX_LDFLAGS = "--strip-debug";
+  };
 
   postPatch =
     let
@@ -114,19 +130,13 @@ rustPlatform.buildRustPackage (finalAttrs: {
     chmod -R u+w "$ZIG_GLOBAL_CACHE_DIR/p"
   '';
 
-  # hc tells builds apart by their GNU build id, so a byte-identical copy of
-  # the binary counts as the same build. Without one it falls back to the
-  # file's identity.
-  env.NIX_SET_BUILD_ID = "1";
-  # The linker hashes the debug sections into the build id, and those hold
-  # Zig cache paths that change from build to build. Dropping them at link
-  # time keeps the build id reproducible; stdenv strips them anyway.
-  env.NIX_LDFLAGS = "--strip-debug";
-
   nativeCheckInputs = [
     git
     python3
   ];
+
+  # Some tests check timings that Darwin builders miss.
+  doCheck = !stdenv.hostPlatform.isDarwin;
 
   # postPatch makes hc download a release build for every machine it sets up,
   # and these two tests try to set one up. The sandbox has no network.
@@ -177,6 +187,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
     platforms = [
       "x86_64-linux"
       "aarch64-linux"
+      "aarch64-darwin"
     ];
   };
 })
