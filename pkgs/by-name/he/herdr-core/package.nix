@@ -3,6 +3,7 @@
   rustPlatform,
   fetchFromGitHub,
   zig_0_16,
+  installAgentSkills,
   bash,
   coreutils,
   curl,
@@ -38,6 +39,10 @@ rustPlatform.buildRustPackage (finalAttrs: {
     fetchAll = true;
     hash = "sha256-G9xbZ/pyQTDIfzG0h++i70a45zpwyYpZMBZfAnoOQw0=";
   };
+
+  nativeBuildInputs = [
+    installAgentSkills
+  ];
 
   env.ZIG = lib.getExe zig_0_16;
 
@@ -137,8 +142,14 @@ rustPlatform.buildRustPackage (finalAttrs: {
     export HC_TEST_SLOW_RUNNER=1
   '';
 
+  # The skill hook would install every SKILL.md in the tree: src/SKILL.md is
+  # the manual compiled into `hc --skill`, and vendor/ghostty carries its own.
+  # Only the stub under skills/ is meant to be installed.
+  dontInstallAgentSkills = true;
+
   postInstall = ''
     ln -s herdr-core $out/bin/hc
+    installSkill skills/herdr-core
     install -Dm644 LICENSE -t $out/share/licenses/herdr-core
   '';
 
