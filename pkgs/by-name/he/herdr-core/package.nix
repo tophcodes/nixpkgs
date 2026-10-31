@@ -150,7 +150,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
   postInstall = ''
     ln -s herdr-core $out/bin/hc
     installSkill skills/herdr-core
-    install -Dm644 LICENSE -t $out/share/licenses/herdr-core
+    install -Dm644 LICENSE crates/herdr-core/THIRD-PARTY-NOTICES -t $out/share/licenses/herdr-core
   '';
 
   nativeInstallCheckInputs = [ versionCheckHook ];
@@ -166,6 +166,8 @@ rustPlatform.buildRustPackage (finalAttrs: {
   meta = {
     description = "Persistent terminal and coding agent backend for Herdr";
     homepage = "https://github.com/herdrdev/herdr-core";
+    # The binary also includes libghostty-vt and its dependencies under other
+    # free licenses; see share/licenses/herdr-core/THIRD-PARTY-NOTICES.
     license = lib.licenses.asl20;
     maintainers = with lib.maintainers; [
       munksgaard
