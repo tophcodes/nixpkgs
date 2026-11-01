@@ -84,9 +84,13 @@ rustPlatform.buildRustPackage (finalAttrs: {
     ''
       # Bundled Zig runtimes cause overlapping unwind frames when linked with Rust.
       substituteInPlace vendor/ghostty/src/build/GhosttyLibVt.zig \
-        --replace-fail 'lib.bundle_compiler_rt = true;' 'lib.bundle_compiler_rt = false;' \
         --replace-fail 'lib.bundle_ubsan_rt = true;' 'lib.bundle_ubsan_rt = false;'
-
+    ''
+    + lib.optionalString stdenv.hostPlatform.isLinux ''
+      substituteInPlace vendor/ghostty/src/build/GhosttyLibVt.zig \
+        --replace-fail 'lib.bundle_compiler_rt = true;' 'lib.bundle_compiler_rt = false;'
+    ''
+    + ''
       # hc downloads, checks and unpacks release builds for machines it adds.
       # bsdtar unpacks gzip itself; GNU tar would look up gzip on PATH. ssh
       # and the systemd tools stay on PATH: they have to match the host.

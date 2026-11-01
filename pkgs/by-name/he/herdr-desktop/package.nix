@@ -85,9 +85,13 @@ rustPlatform.buildRustPackage (finalAttrs: {
   postPatch = ''
     # Bundled Zig runtimes cause overlapping unwind frames when linked with Rust.
     substituteInPlace vendor/ghostty/src/build/GhosttyLibVt.zig \
-      --replace-fail 'lib.bundle_compiler_rt = true;' 'lib.bundle_compiler_rt = false;' \
       --replace-fail 'lib.bundle_ubsan_rt = true;' 'lib.bundle_ubsan_rt = false;'
-
+  ''
+  + lib.optionalString stdenv.hostPlatform.isLinux ''
+    substituteInPlace vendor/ghostty/src/build/GhosttyLibVt.zig \
+      --replace-fail 'lib.bundle_compiler_rt = true;' 'lib.bundle_compiler_rt = false;'
+  ''
+  + ''
     # The app looks for hc on PATH, then in the usual install places; this
     # herdr-core joins those, after the system profile.
     substituteInPlace src/core_bin.rs \
