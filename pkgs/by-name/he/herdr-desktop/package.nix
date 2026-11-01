@@ -46,11 +46,6 @@ rustPlatform.buildRustPackage (finalAttrs: {
     hash = "sha256-ElraUWks2i8aJJhkbwpz43k6ttOV55NMPek344wgyZs=";
   };
 
-  # Closing a window on a Mac with a Touch Bar aborts in AppKit's
-  # -[_NSTouchBarFinderObservation invalidate]: zed-industries/zed#64819,
-  # fixed by zed-industries/zed#65186, applied to the vendored gpui-pre-macos.
-  patches = lib.optionals stdenv.hostPlatform.isDarwin [ ./gpui-macos-touch-bar-window-close.patch ];
-
   cargoHash = "sha256-euxSTVGKqaFfJh9umqPeaDYej5ytFXgLECeL62V1SrY=";
 
   zigDeps = zig_0_16.fetchDeps {
