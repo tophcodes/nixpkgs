@@ -200,6 +200,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
       mit # Symbols Nerd Font
     ];
     maintainers = with lib.maintainers; [
+      iamppborah
       munksgaard
       tophcodes
     ];

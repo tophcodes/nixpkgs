@@ -184,6 +184,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
     # free licenses; see share/licenses/herdr-core/THIRD-PARTY-NOTICES.
     license = lib.licenses.asl20;
     maintainers = with lib.maintainers; [
+      iamppborah
       munksgaard
       tophcodes
     ];
