@@ -25,10 +25,12 @@ let
     "0.16.0" = {
       llvmPackages = llvmPackages_21;
       hash = "sha256-2sTMhaasyrKoBnyH/hQrNCbi0Vh6HekIrpE4XkyQulQ=";
+      patches = [ ./ssl-cert-file-0.16.patch ];
     };
     "0.17.0" = {
       llvmPackages = llvmPackages_22;
       hash = "sha256-dXy3DrGQHDpXCnr+Wi/1tPEktPm9bBDJQiQ/0VyiMaM=";
+      patches = [ ./ssl-cert-file-0.17.patch ];
     };
   }
   // zigVersions;
@@ -38,6 +40,7 @@ let
       version,
       hash,
       llvmPackages,
+      ...
     }@args:
     callPackage ./generic.nix args;
 

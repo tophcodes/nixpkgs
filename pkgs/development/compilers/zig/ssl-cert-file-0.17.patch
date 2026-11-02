@@ -1,0 +1,47 @@
+Load the root certificates from SSL_CERT_FILE when fetching packages.
+The macOS certificate store is unreadable in the Darwin sandbox.
+
+Upstream issue: https://codeberg.org/ziglang/zig/issues/36288
+
+--- a/lib/compiler/Maker.zig
++++ b/lib/compiler/Maker.zig
+@@ -1261,6 +1261,7 @@
+ 
+                 if (options.system_pkg_dir_path == null) {
+                     try http_client.initDefaultProxies(arena, &graph.environ_map);
++                    loadCaBundleFromEnv(&http_client, &graph.environ_map);
+                 }
+ 
+                 try job_queue.all_fetches.ensureUnusedCapacity(gpa, 1);
+@@ -1656,6 +1657,23 @@
+     };
+ }
+ 
++/// Loads the root certificates from the file that SSL_CERT_FILE names, in
++/// place of the operating system's store, which a build sandbox can hide
++/// (https://codeberg.org/ziglang/zig/issues/36288). A file that cannot be
++/// opened leaves the operating system's store in use: Nix builds set
++/// SSL_CERT_FILE to a path that does not exist.
++fn loadCaBundleFromEnv(http_client: *std.http.Client, environ_map: *const process.Environ.Map) void {
++    const path = environ_map.get("SSL_CERT_FILE") orelse return;
++    const io = http_client.io;
++    var file = Io.Dir.cwd().openFile(io, path, .{}) catch return;
++    defer file.close(io);
++    var file_reader = file.reader(io, &.{});
++    const now = Io.Clock.real.now(io);
++    http_client.ca_bundle.addCertsFromFile(http_client.allocator, &file_reader, now.toSeconds()) catch |err|
++        fatal("unable to load certificates from SSL_CERT_FILE '{s}': {t}", .{ path, err });
++    http_client.now = now;
++}
++
+ fn cmdFetch(gpa: Allocator, graph: *Graph, args: []const []const u8) !void {
+     const environ_map = &graph.environ_map;
+     const io = graph.io;
+@@ -1710,6 +1728,7 @@
+     defer http_client.deinit();
+ 
+     try http_client.initDefaultProxies(arena, environ_map);
++    loadCaBundleFromEnv(&http_client, environ_map);
+ 
+     var root_prog_node = std.Progress.start(io, .{
+         .root_name = "Fetch",

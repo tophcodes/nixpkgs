@@ -1,0 +1,47 @@
+Load the root certificates from SSL_CERT_FILE when fetching packages.
+The macOS certificate store is unreadable in the Darwin sandbox.
+
+Upstream issue: https://codeberg.org/ziglang/zig/issues/36288
+
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -5374,6 +5374,7 @@
+                     cleanup_build_dir = job_queue.global_cache.handle;
+                 } else {
+                     try http_client.initDefaultProxies(arena, environ_map);
++                    loadCaBundleFromEnv(&http_client, environ_map);
+                 }
+ 
+                 try job_queue.all_fetches.ensureUnusedCapacity(gpa, 1);
+@@ -7048,6 +7049,23 @@
+     \\
+ ;
+ 
++/// Loads the root certificates from the file that SSL_CERT_FILE names, in
++/// place of the operating system's store, which a build sandbox can hide
++/// (https://codeberg.org/ziglang/zig/issues/36288). A file that cannot be
++/// opened leaves the operating system's store in use: Nix builds set
++/// SSL_CERT_FILE to a path that does not exist.
++fn loadCaBundleFromEnv(http_client: *std.http.Client, environ_map: *const process.Environ.Map) void {
++    const path = environ_map.get("SSL_CERT_FILE") orelse return;
++    const io = http_client.io;
++    var file = Io.Dir.cwd().openFile(io, path, .{}) catch return;
++    defer file.close(io);
++    var file_reader = file.reader(io, &.{});
++    const now = Io.Clock.real.now(io);
++    http_client.ca_bundle.addCertsFromFile(http_client.allocator, &file_reader, now.toSeconds()) catch |err|
++        fatal("unable to load certificates from SSL_CERT_FILE '{s}': {t}", .{ path, err });
++    http_client.now = now;
++}
++
+ fn cmdFetch(
+     gpa: Allocator,
+     arena: Allocator,
+@@ -7106,6 +7124,7 @@
+     defer http_client.deinit();
+ 
+     try http_client.initDefaultProxies(arena, environ_map);
++    loadCaBundleFromEnv(&http_client, environ_map);
+ 
+     var root_prog_node = std.Progress.start(io, .{
+         .root_name = "Fetch",
