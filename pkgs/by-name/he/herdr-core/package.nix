@@ -1,6 +1,7 @@
 {
   lib,
   stdenv,
+  callPackage,
   rustPlatform,
   fetchFromGitHub,
   zig_0_16,
@@ -35,11 +36,8 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   cargoHash = "sha256-vd9qS9g9Fx49hadRlXq1y4OnVo+btZdAvynxk8nbC4c=";
 
-  zigDeps = zig_0_16.fetchDeps {
-    inherit (finalAttrs) pname version;
-    src = "${finalAttrs.src}/vendor/ghostty";
-    fetchAll = true;
-    hash = "sha256-G9xbZ/pyQTDIfzG0h++i70a45zpwyYpZMBZfAnoOQw0=";
+  zigDeps = callPackage ./ghostty-deps.nix {
+    name = "${finalAttrs.pname}-zig-deps-${finalAttrs.version}";
   };
 
   nativeBuildInputs = [
@@ -139,8 +137,8 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   preBuild = ''
     export ZIG_GLOBAL_CACHE_DIR=$(mktemp -d)
-    cp -rL ${finalAttrs.zigDeps} "$ZIG_GLOBAL_CACHE_DIR/p"
-    chmod -R u+w "$ZIG_GLOBAL_CACHE_DIR/p"
+    cp -rL ${finalAttrs.zigDeps} vendor/ghostty/zig-pkg
+    chmod -R u+w vendor/ghostty/zig-pkg
   '';
 
   nativeCheckInputs = [
