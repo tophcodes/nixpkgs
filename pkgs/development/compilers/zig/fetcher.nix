@@ -2,6 +2,7 @@
   lib,
   zig,
   runCommand,
+  cacert,
 }:
 {
   pname,
@@ -15,7 +16,12 @@ runCommand "${name}-zig-deps"
   {
     inherit src fetchAll;
 
-    nativeBuildInputs = [ zig ];
+    nativeBuildInputs = [
+      zig
+    ]
+    # cacert sets SSL_CERT_FILE. The patched Zig 0.16 and newer read it in place
+    # of the system's certificate store, which the Darwin sandbox hides.
+    ++ lib.optional (lib.versionAtLeast zig.version "0.16") cacert;
 
     outputHashAlgo = if hash == "" then "sha256" else null;
     outputHashMode = "recursive";
