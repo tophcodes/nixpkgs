@@ -17,7 +17,11 @@
   wayland,
   vulkan-loader,
   mesa,
+  makeFontsConf,
+  dejavu_fonts,
   writableTmpDirAsHomeHook,
+  git,
+  curl,
   xdg-utils,
   herdr-core,
   versionCheckHook,
@@ -34,7 +38,7 @@ let
 in
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "herdr-desktop";
-  version = "0.1.10";
+  version = "0.1.13";
 
   __structuredAttrs = true;
 
@@ -43,10 +47,10 @@ rustPlatform.buildRustPackage (finalAttrs: {
     repo = "herdr-app";
     tag = "v${finalAttrs.version}";
     fetchSubmodules = true;
-    hash = "sha256-ElraUWks2i8aJJhkbwpz43k6ttOV55NMPek344wgyZs=";
+    hash = "sha256-vM25epPf+4Y+gUj/2BTQ6fpOIBI7T5UddFdlMAr6X0o=";
   };
 
-  cargoHash = "sha256-euxSTVGKqaFfJh9umqPeaDYej5ytFXgLECeL62V1SrY=";
+  cargoHash = "sha256-7bz9iEMvf2o2I0SsnXaZ0135PlMm73DrJ9ZhSqAjcKY=";
 
   # zig.fetchDeps fails in the Darwin sandbox with CertificateBundleLoadFailure:
   # Zig reads its root certificates from the system keychains, which the
@@ -95,6 +99,15 @@ rustPlatform.buildRustPackage (finalAttrs: {
         --replace-fail '"xdg-open"' '"${lib.getExe' xdg-utils "xdg-open"}"'
       substituteInPlace vendor/gpui-pre-linux/src/linux/platform.rs \
         --replace-fail 'new_std_command("xdg-open")' 'new_std_command("${lib.getExe' xdg-utils "xdg-open"}")'
+
+      # The tests use /var/tmp, which the sandbox lacks (herdrdev/herdr-app#682).
+      # Test files change as a whole, other files from their top-level tests
+      # module to the end.
+      # postFixup checks that no production code picks up the replacement.
+      find src tests -name '*.rs' \( -path '*/tests/*' -o -name '*tests.rs' \) \
+        -exec sed -i "s|/var/tmp|$NIX_BUILD_TOP/var-tmp|g" {} +
+      find src tests -name '*.rs' \
+        -exec sed -i "/^mod tests {/,\$s|/var/tmp|$NIX_BUILD_TOP/var-tmp|g" {} +
     ''
     + lib.optionalString stdenv.hostPlatform.isDarwin ''
       # Ghostty's build calls these by absolute path, which the sandbox lacks.
@@ -118,11 +131,6 @@ rustPlatform.buildRustPackage (finalAttrs: {
       substituteInPlace defaults/frame/settings/main.js \
         --replace-fail '"A build from source: it updates with git, not here."' \
           '"Managed by nix: update it there."'
-
-      # The tests use /var/tmp, which the sandbox lacks.
-      for f in src/{mod_files.rs,mods.rs,mods/lifecycle_tests.rs,mods/render_tests.rs,update_notes.rs}; do
-        substituteInPlace "$f" --replace-fail /var/tmp "$TMPDIR"
-      done
     '';
 
   preBuild = ''
@@ -134,12 +142,25 @@ rustPlatform.buildRustPackage (finalAttrs: {
   # The render tests need Metal, which the sandbox does not provide.
   doCheck = !stdenv.hostPlatform.isDarwin;
 
-  # Some tests run programs in $HOME.
-  nativeCheckInputs = [ writableTmpDirAsHomeHook ];
+  nativeCheckInputs = [
+    # Some tests run programs in $HOME.
+    writableTmpDirAsHomeHook
+    # The file watcher tests set up git repositories; an update test runs curl.
+    git
+    curl
+  ];
+
+  # Upstream tests debug builds: some tests read element bounds that GPUI
+  # records only with debug assertions on.
+  checkType = "debug";
 
   checkFlags = [
-    # Reads element bounds that only debug builds record.
-    "--skip=window::tests::fitted_popups_use_their_rendered_size_at_the_window_edge"
+    # These run the other machine's shells from /bin and /usr/bin; the sandbox
+    # has only a busybox /bin/sh.
+    "--skip=remote_shell::tests"
+    # Calls /bin/test, which the sandbox lacks; the code under test runs on
+    # macOS only.
+    "--skip=core_bin::tests::bundle_completion_skips_unwritable_directories"
     # Races a thread against GPUI's test scheduler and fails now and then.
     "--skip=mods::lifecycle_tests::close_starts_native_work_before_releasing_the_copy"
     # Upstream's check that THIRD-PARTY-NOTICES matches the vendored sources;
@@ -149,9 +170,13 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   # The render and pixel tests draw real frames, on Mesa's software Vulkan
   # driver; the test binaries don't get the RUNPATH entries from postFixup.
+  # Without the app's bundled fonts, GPUI looks up a system UI font through
+  # fontconfig, and the sandbox has none.
   preCheck = lib.optionalString stdenv.hostPlatform.isLinux ''
     export VK_DRIVER_FILES=${mesa}/share/vulkan/icd.d/lvp_icd.${stdenv.hostPlatform.parsed.cpu.name}.json
     export LD_LIBRARY_PATH=${lib.makeLibraryPath dlopenLibs}
+    export FONTCONFIG_FILE=${makeFontsConf { fontDirectories = [ dejavu_fonts ]; }}
+    mkdir -p "$NIX_BUILD_TOP/var-tmp"
   '';
 
   desktopItems = lib.optionals stdenv.hostPlatform.isLinux [
@@ -187,8 +212,16 @@ rustPlatform.buildRustPackage (finalAttrs: {
   # A RUNPATH entry rather than LD_LIBRARY_PATH: the app starts herdr-core,
   # which passes its environment on to every terminal. This runs after fixup,
   # which drops RUNPATH entries the binary doesn't link against.
+  # The /var/tmp replacement in postPatch must stay in test code. The check
+  # for it runs here, which every build runs, rather than in an install
+  # check, which an override can turn off.
   postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
     patchelf --add-rpath ${lib.makeLibraryPath dlopenLibs} $out/bin/herdr-app
+
+    if grep -rlF "$NIX_BUILD_TOP/var-tmp" $out; then
+      echo "postPatch replaced /var/tmp in production code; narrow its file selection" >&2
+      exit 1
+    fi
   '';
 
   nativeInstallCheckInputs = [ versionCheckHook ];
