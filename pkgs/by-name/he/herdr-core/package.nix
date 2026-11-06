@@ -15,13 +15,14 @@
   gnutar,
   gzip,
   libarchive,
+  jq,
   python3,
   versionCheckHook,
   nix-update-script,
 }:
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "herdr-core";
-  version = "0.1.15";
+  version = "0.1.18";
 
   __structuredAttrs = true;
 
@@ -30,10 +31,10 @@ rustPlatform.buildRustPackage (finalAttrs: {
     repo = "herdr-core";
     tag = "v${finalAttrs.version}";
     fetchSubmodules = true;
-    hash = "sha256-v0BFg3FEBkaf8DDIEFCj5GAuiFnNmW2r2vaBa+csWyo=";
+    hash = "sha256-MSq0Tzlv0/aOQvuXkeuVuGx3vpUauxI1YAeLpKy7WG4=";
   };
 
-  cargoHash = "sha256-vd9qS9g9Fx49hadRlXq1y4OnVo+btZdAvynxk8nbC4c=";
+  cargoHash = "sha256-d3dTX5qvikpkIABz0ecDjPu1pA0LsSmPu5j4Oum6R3c=";
 
   # zig.fetchDeps fails in the Darwin sandbox with CertificateBundleLoadFailure:
   # Zig reads its root certificates from the system keychains, which the
@@ -92,6 +93,15 @@ rustPlatform.buildRustPackage (finalAttrs: {
       substituteInPlace vendor/ghostty/src/build/GhosttyLibVt.zig \
         --replace-fail 'lib.bundle_compiler_rt = true;' 'lib.bundle_compiler_rt = false;' \
         --replace-fail 'lib.bundle_ubsan_rt = true;' 'lib.bundle_ubsan_rt = false;'
+
+      # The tests use /var/tmp, which the sandbox lacks (herdrdev/herdr-core#158).
+      # Test files change as a whole, other files from their top-level tests
+      # module to the end.
+      # postFixup checks that no production code picks up the replacement.
+      find crates/herdr-core -name '*.rs' \( -path '*/tests/*' -o -name '*tests.rs' \) \
+        -exec sed -i "s|/var/tmp|$NIX_BUILD_TOP/var-tmp|g" {} +
+      find crates/herdr-core -name '*.rs' \
+        -exec sed -i "/^mod tests {/,\$s|/var/tmp|$NIX_BUILD_TOP/var-tmp|g" {} +
     ''
     + lib.optionalString stdenv.hostPlatform.isDarwin ''
       # Ghostty's build calls these by absolute path, which the sandbox lacks.
@@ -118,12 +128,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
       # lacks those exact store paths. Every machine gets this version's
       # statically linked release build instead, as other CPUs already do.
       substituteInPlace crates/herdr-core/src/machines.rs \
-        --replace-fail 'let exe = if there == here {' 'let exe = if false {'
-
-      # The tests use /var/tmp, which the sandbox lacks.
-      for f in crates/herdr-core/{src/platform/systemd.rs,src/remote/tests.rs,src/runtime/tests.rs,tests/common/mod.rs,tests/m1.rs}; do
-        substituteInPlace "$f" --replace-fail /var/tmp "$TMPDIR"
-      done
+        --replace-fail 'let bin = if there == here && (' 'let bin = if false && ('
 
       # The fake ssh in the tests gives the other machine PATH=/usr/bin:/bin,
       # which the sandbox lacks.
@@ -148,7 +153,11 @@ rustPlatform.buildRustPackage (finalAttrs: {
   '';
 
   nativeCheckInputs = [
+    # install.sh downloads with curl from PATH in the installer tests.
+    curl
     git
+    # scripts/mac-notarize, which tests/macos_distribution.rs runs.
+    jq
     python3
   ];
 
@@ -168,6 +177,9 @@ rustPlatform.buildRustPackage (finalAttrs: {
   preCheck = ''
     export HC_TEST_WATCHDOG_S=120
     export HC_TEST_SLOW_RUNNER=1
+  ''
+  + lib.optionalString stdenv.hostPlatform.isLinux ''
+    mkdir -p "$NIX_BUILD_TOP/var-tmp"
   '';
 
   # The skill hook would install every SKILL.md in the tree: src/SKILL.md is
@@ -179,6 +191,16 @@ rustPlatform.buildRustPackage (finalAttrs: {
     ln -s herdr-core $out/bin/hc
     installSkill skills/herdr-core
     install -Dm644 LICENSE crates/herdr-core/THIRD-PARTY-NOTICES -t $out/share/licenses/herdr-core
+  '';
+
+  # The /var/tmp replacement in postPatch must stay in test code. This runs
+  # in postFixup, which every build runs, rather than in an install check,
+  # which an override can turn off.
+  postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
+    if grep -rlF "$NIX_BUILD_TOP/var-tmp" $out; then
+      echo "postPatch replaced /var/tmp in production code; narrow its file selection" >&2
+      exit 1
+    fi
   '';
 
   nativeInstallCheckInputs = [ versionCheckHook ];
