@@ -2,6 +2,7 @@
   lib,
   stdenv,
   rustPlatform,
+  callPackage,
   fetchFromGitHub,
   zig_0_16,
   pkg-config,
@@ -25,7 +26,6 @@
   xdg-utils,
   herdr-core,
   versionCheckHook,
-  nix-update-script,
 }:
 let
   # wgpu (Vulkan, with OpenGL as fallback) and the Wayland backend load these
@@ -52,15 +52,12 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   cargoHash = "sha256-7bz9iEMvf2o2I0SsnXaZ0135PlMm73DrJ9ZhSqAjcKY=";
 
-  # zig.fetchDeps fails in the Darwin sandbox with CertificateBundleLoadFailure:
-  # Zig reads its root certificates from the system keychains, which the
-  # sandbox hides. The output is the same on every platform, so Darwin builds
-  # take it from the cache; without one, build it with `--option sandbox false`.
-  zigDeps = zig_0_16.fetchDeps {
-    inherit (finalAttrs) pname version;
-    src = "${finalAttrs.src}/vendor/ghostty";
-    fetchAll = true;
-    hash = "sha256-G9xbZ/pyQTDIfzG0h++i70a45zpwyYpZMBZfAnoOQw0=";
+  # The Zig dependencies of vendor/ghostty, from the zon2nix expression Ghostty
+  # commits; update.sh replaces it on every version bump. Nix fetches each
+  # one: zig.fetchDeps fails in the Darwin sandbox, where Zig finds no root
+  # certificates.
+  zigDeps = callPackage ./deps.nix {
+    name = "${finalAttrs.pname}-zig-deps-${finalAttrs.version}";
   };
 
   nativeBuildInputs = [
@@ -133,10 +130,12 @@ rustPlatform.buildRustPackage (finalAttrs: {
           '"Managed by nix: update it there."'
     '';
 
+  # Zig takes unpacked packages from zig-pkg in the directory it builds in;
+  # its global cache holds only tarballs.
   preBuild = ''
     export ZIG_GLOBAL_CACHE_DIR=$(mktemp -d)
-    cp -rL ${finalAttrs.zigDeps} "$ZIG_GLOBAL_CACHE_DIR/p"
-    chmod -R u+w "$ZIG_GLOBAL_CACHE_DIR/p"
+    cp -rL ${finalAttrs.zigDeps} vendor/ghostty/zig-pkg
+    chmod -R u+w vendor/ghostty/zig-pkg
   '';
 
   # The render tests need Metal, which the sandbox does not provide.
@@ -227,12 +226,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
   nativeInstallCheckInputs = [ versionCheckHook ];
   doInstallCheck = true;
 
-  passthru.updateScript = nix-update-script {
-    extraArgs = [
-      "--custom-dep"
-      "zigDeps"
-    ];
-  };
+  passthru.updateScript = ./update.sh;
 
   meta = {
     description = "Desktop app for persistent terminals and coding agents";
