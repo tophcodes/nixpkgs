@@ -2,6 +2,7 @@
   lib,
   stdenv,
   rustPlatform,
+  callPackage,
   fetchFromGitHub,
   zig_0_16,
   cctools,
@@ -18,7 +19,6 @@
   jq,
   python3,
   versionCheckHook,
-  nix-update-script,
 }:
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "herdr-core";
@@ -36,15 +36,12 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   cargoHash = "sha256-d3dTX5qvikpkIABz0ecDjPu1pA0LsSmPu5j4Oum6R3c=";
 
-  # zig.fetchDeps fails in the Darwin sandbox with CertificateBundleLoadFailure:
-  # Zig reads its root certificates from the system keychains, which the
-  # sandbox hides. The output is the same on every platform, so Darwin builds
-  # take it from the cache; without one, build it with `--option sandbox false`.
-  zigDeps = zig_0_16.fetchDeps {
-    inherit (finalAttrs) pname version;
-    src = "${finalAttrs.src}/vendor/ghostty";
-    fetchAll = true;
-    hash = "sha256-G9xbZ/pyQTDIfzG0h++i70a45zpwyYpZMBZfAnoOQw0=";
+  # The Zig dependencies of vendor/ghostty, from the zon2nix expression Ghostty
+  # commits; update.sh replaces it on every version bump. Nix fetches each
+  # one: zig.fetchDeps fails in the Darwin sandbox, where Zig finds no root
+  # certificates.
+  zigDeps = callPackage ./deps.nix {
+    name = "${finalAttrs.pname}-zig-deps-${finalAttrs.version}";
   };
 
   nativeBuildInputs = [
@@ -146,10 +143,12 @@ rustPlatform.buildRustPackage (finalAttrs: {
       patchShebangs scripts/manifest
     '';
 
+  # Zig takes unpacked packages from zig-pkg in the directory it builds in;
+  # its global cache holds only tarballs.
   preBuild = ''
     export ZIG_GLOBAL_CACHE_DIR=$(mktemp -d)
-    cp -rL ${finalAttrs.zigDeps} "$ZIG_GLOBAL_CACHE_DIR/p"
-    chmod -R u+w "$ZIG_GLOBAL_CACHE_DIR/p"
+    cp -rL ${finalAttrs.zigDeps} vendor/ghostty/zig-pkg
+    chmod -R u+w vendor/ghostty/zig-pkg
   '';
 
   nativeCheckInputs = [
@@ -206,12 +205,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
   nativeInstallCheckInputs = [ versionCheckHook ];
   doInstallCheck = true;
 
-  passthru.updateScript = nix-update-script {
-    extraArgs = [
-      "--custom-dep"
-      "zigDeps"
-    ];
-  };
+  passthru.updateScript = ./update.sh;
 
   meta = {
     description = "Persistent terminal and coding agent backend for Herdr";
